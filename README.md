@@ -1,7 +1,7 @@
 # LoL Champions Checklist
 
 A **League of Legends Arena mode** checklist web app.  
-Pulls champion icons live from Riot's Data Dragon API and lets you track your progress for A–Z or other Arena challenges.
+Pulls champion icons live from Riot's Data Dragon API and lets you track your progress for e.g. an A–Z Arena challenge.
 
 ## Features
 - **Live champion list** from Riot API.

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>League of Legends Champions — Checklist</title>
+    <style>
+        :root{
+            --bg:#0b0f19; --card:#121826; --text:#e6e8f0; --muted:#9aa4b2; --accent:#6ee7ff; --ring:#263043;
+            --won:#22c55e; --place:#eab308;
+        }
+        *{box-sizing:border-box}
+        html,body{height:100%}
+        body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Inter, "Segoe UI Variable", Arial, sans-serif}
+        header{position:sticky;top:0;z-index:2;background:linear-gradient(180deg, rgba(11,15,25,.98), rgba(11,15,25,.92) 60%, transparent);backdrop-filter:saturate(1.1) blur(6px);}
+        .wrap{max-width:1100px;margin:0 auto;padding:18px 16px}
+        h1{font-size:clamp(20px,2.4vw,28px);margin:0 0 10px;font-weight:700}
+        .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+        .controls > *{margin-right:8px}
+        button, .file-label{border:1px solid var(--ring);background:var(--card);color:var(--text);padding:8px 12px;border-radius:12px;cursor:pointer;transition:transform .06s ease, border-color .2s ease, background .2s ease}
+        button:hover,.file-label:hover{border-color:var(--accent)}
+        button:active{transform:translateY(1px)}
+        input[type="search"]{border:1px solid var(--ring);background:var(--card);color:var(--text);padding:8px 12px;border-radius:12px;min-width:220px}
+        #status{font-size:13px;color:var(--muted)}
+
+        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:14px;margin-top:14px}
+        .champ{position:relative;background:var(--card);border:1px solid var(--ring);border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+        .imgwrap{width:100%;aspect-ratio:1/1;overflow:hidden;cursor:pointer}
+        .imgwrap img{width:100%;height:100%;object-fit:cover;display:block;transition:filter .2s ease, opacity .2s ease}
+        .name{padding:8px 10px 0;font-size:13px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+        /* Gray out when Won */
+        .champ.status-won .imgwrap img{filter:grayscale(100%) contrast(90%) brightness(70%);opacity:.55}
+
+        /* Status pill */
+        .pill{position:absolute;top:6px;left:6px;display:flex;align-items:center;gap:6px}
+        .tag{font-size:11px;line-height:1;padding:4px 6px;border-radius:7px;border:1px solid var(--ring);background:rgba(18,24,38,.7);color:var(--muted)}
+        .tag[data-kind="won"]{color:#062e12;background:rgba(34,197,94,.9);border-color:#208a4a}
+        .tag[data-kind="24"]{color:#2b2303;background:rgba(234,179,8,.92);border-color:#9a7a05}
+
+        /* Options row */
+        .options{
+            display:flex; flex-wrap:wrap; gap:6px; justify-content:center; align-items:center;
+            padding:8px; border-top:1px solid var(--ring);
+            background:linear-gradient(180deg, rgba(18,24,38,.6), rgba(18,24,38,.2));
+        }
+        .opt{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid var(--ring);background:rgba(18,24,38,.7);border-radius:10px;font-size:12px;cursor:pointer;user-select:none}
+        .opt:hover{border-color:var(--accent)}
+        /* Hidden radio for a11y; we drive visuals with .active */
+        .opt input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none;margin:0}
+        .opt .box{width:14px;height:14px;border:1px solid var(--ring);border-radius:4px;display:inline-grid;place-items:center}
+        /* Show tick via .active (not native :checked), so JS control is reliable */
+        .opt.active .box{border-color:var(--accent)}
+        .opt.active .box::after{content:'✓';font-size:12px;line-height:1}
+
+        .empty{color:var(--muted);text-align:center;padding:40px 10px}
+        footer{padding:24px 0;color:var(--muted)}
+    </style>
+</head>
+<body>
+<header>
+    <div class="wrap">
+        <h1>LoL Champions — Checklist</h1>
+        <div class="controls">
+            <input id="search" type="search" placeholder="Search champions…" aria-label="Search champions" />
+            <button id="btnCheckAll" type="button">Check all as Won</button>
+            <button id="btnUncheckAll" type="button">Clear all</button>
+            <button id="btnExport" type="button">Export</button>
+            <label class="file-label" for="fileImport">Import</label>
+            <input id="fileImport" type="file" accept="application/json" hidden />
+            <span id="status" role="status" aria-live="polite"></span>
+        </div>
+    </div>
+</header>
+
+<main class="wrap">
+    <div id="grid" class="grid" role="list" aria-label="Champions list"></div>
+    <div id="empty" class="empty" hidden>No champions match your search.</div>
+    <footer>
+        <small>Data from Riot Data Dragon. Progress auto-saved locally. Export/import JSON to keep a file backup.</small>
+    </footer>
+</main>
+
+<script>
+    const STORAGE_KEY = 'lol_champ_status_v8';
+    const STATE = { version:null, champs:[], status:loadStatus(), filter:'' };
+
+    function loadStatus(){ try{ return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch{ return {}; } }
+    function saveStatus(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE.status)); note('Saved'); }
+    function note(msg){ const el=document.getElementById('status'); el.textContent=msg; clearTimeout(note._t); note._t=setTimeout(()=> el.textContent='', 1200); }
+
+    async function getLatestVersion(){
+        const res = await fetch('https://ddragon.leagueoflegends.com/api/versions.json');
+        if(!res.ok) throw new Error('Failed to get versions');
+        const versions = await res.json();
+        return versions[0];
+    }
+
+    async function loadChampions(){
+        const v = await getLatestVersion();
+        STATE.version = v;
+        const url = `https://ddragon.leagueoflegends.com/cdn/${v}/data/en_US/champion.json`;
+        const res = await fetch(url);
+        if(!res.ok) throw new Error('Failed to load champions');
+        const json = await res.json();
+        STATE.champs = Object.values(json.data)
+            .map(c => ({ id:c.id, key:c.key, name:c.name, image:c.image.full }))
+            .sort((a,b)=> a.name.localeCompare(b.name));
+    }
+
+    function iconUrl(image){ return `https://ddragon.leagueoflegends.com/cdn/${STATE.version}/img/champion/${image}`; }
+
+    function setStatus(id, val){
+        STATE.status[id] = val;             // 'none' | 'won' | '24'
+        saveStatus();
+        render();
+    }
+
+    function render(){
+        const grid = document.getElementById('grid');
+        const empty = document.getElementById('empty');
+        grid.innerHTML = '';
+        const q = STATE.filter.trim().toLowerCase();
+        const items = q ? STATE.champs.filter(c => c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q)) : STATE.champs;
+        empty.hidden = items.length !== 0;
+
+        for(const champ of items){
+            const st = STATE.status[champ.id] || 'none';
+            const card = document.createElement('div');
+            card.className = 'champ' + (st==='won' ? ' status-won' : '');
+            card.role = 'listitem';
+
+            const imgwrap = document.createElement('div');
+            imgwrap.className = 'imgwrap';
+            const img = document.createElement('img');
+            img.loading = 'lazy'; img.alt = champ.name; img.src = iconUrl(champ.image);
+            imgwrap.appendChild(img);
+
+            // Icon click: None ↔ Won
+            imgwrap.addEventListener('click', () => {
+                const current = STATE.status[champ.id] || 'none';
+                const next = current === 'won' ? 'none' : 'won';
+                setStatus(champ.id, next);
+            });
+
+            const nm = document.createElement('div'); nm.className='name'; nm.textContent = champ.name;
+
+            // Status pill
+            const pill = document.createElement('div'); pill.className='pill';
+            if (st === 'won') { const t=document.createElement('div'); t.className='tag'; t.dataset.kind='won'; t.textContent='Won'; pill.appendChild(t); }
+            if (st === '24') { const t=document.createElement('div'); t.className='tag'; t.dataset.kind='24'; t.textContent='2–4 Place'; pill.appendChild(t); }
+
+            // Options row
+            const opts = document.createElement('div');
+            opts.className = 'options';
+            opts.appendChild(makeOption('Won','won', champ.id, st));
+            opts.appendChild(makeOption('2–4 Place','24', champ.id, st));
+
+            card.appendChild(imgwrap);
+            card.appendChild(nm);
+            card.appendChild(pill);
+            card.appendChild(opts);
+            grid.appendChild(card);
+        }
+    }
+
+    // Option with manual toggling (click again to clear to 'none')
+    function makeOption(labelText, val, id, current){
+        const wrap = document.createElement('label');
+        wrap.className = 'opt';
+        wrap.dataset.val = val;
+
+        // Hidden radio for a11y; visuals use .active class
+        const input = document.createElement('input');
+        input.type = 'radio';
+        input.name = 'opt-'+id;
+
+        const box = document.createElement('span'); box.className = 'box';
+        const text = document.createElement('span'); text.textContent = labelText;
+
+        // Initialize visual state
+        if (current === val) { wrap.classList.add('active'); input.checked = true; }
+
+        wrap.appendChild(input);
+        wrap.appendChild(box);
+        wrap.appendChild(text);
+
+        // Manual toggle: clicking active clears to 'none'
+        wrap.addEventListener('click', (e) => {
+            e.preventDefault(); // avoid native radio locking
+            const currentVal = STATE.status[id] || 'none';
+            const next = (currentVal === val) ? 'none' : val;
+            setStatus(id, next); // re-render updates active/check
+        });
+
+        return wrap;
+    }
+
+    function bindControls(){
+        const search = document.getElementById('search');
+        search.addEventListener('input', () => { STATE.filter = search.value; render(); });
+
+        document.getElementById('btnCheckAll').addEventListener('click', () => {
+            for(const c of STATE.champs) STATE.status[c.id] = 'won';
+            saveStatus(); render();
+        });
+        document.getElementById('btnUncheckAll').addEventListener('click', () => {
+            for(const c of STATE.champs) STATE.status[c.id] = 'none';
+            saveStatus(); render();
+        });
+
+        document.getElementById('btnExport').addEventListener('click', () => {
+            const payload = { version: STATE.version, status: STATE.status };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+            a.download = 'lol-champions-progress.json'; a.click(); URL.revokeObjectURL(a.href);
+        });
+
+        document.getElementById('fileImport').addEventListener('change', async (e) => {
+            const file = e.target.files?.[0]; if(!file) return;
+            try{
+                const text = await file.text();
+                const json = JSON.parse(text);
+                if(json && typeof json === 'object' && (json.status || json.checks)){
+                    STATE.status = json.status || Object.fromEntries(Object.entries(json.checks).map(([k,v])=>[k, v?'won':'none']));
+                    saveStatus(); render(); note('Imported');
+                } else { alert('Invalid file.'); }
+            } catch(err){ alert('Failed to import: ' + err.message); }
+            finally { e.target.value=''; }
+        });
+    }
+
+    (async function(){
+        try { bindControls(); await loadChampions(); render(); }
+        catch(err){ document.getElementById('grid').innerHTML = `<div class="empty">Error: ${err.message}</div>`; console.error(err); }
+    })();
+</script>
+</body>
+</html>
